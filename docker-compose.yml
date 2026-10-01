@@ -32,6 +32,8 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
+      MAX_REQUEST_BYTES: 1048576
+      LOG_LEVEL: INFO
     ports:
       - "8000:8000"
     depends_on:
