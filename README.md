@@ -38,7 +38,10 @@ Readiness check for API dependencies.
 ```
 
 ### `POST /incidents/triage`
-Triages an incident and stores result.
+Validates, triages, and stores an incident. Text is trimmed; whitespace-only values
+are rejected. Maximum lengths are 200 characters for `title`, 5,000 for
+`description`, and 100 each for optional `service` and `source`. Request bodies
+are limited to 1 MiB by default.
 
 **Request body**
 ```json
@@ -63,6 +66,37 @@ Triages an incident and stores result.
 
 ### `GET /incidents/{incident_id}`
 Returns stored incident data + triage output.
+
+### Error responses
+
+Errors use FastAPI's JSON `detail` format. For example, invalid input returns
+HTTP `422` with field-specific validation messages:
+
+```json
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": ["body", "title"],
+      "msg": "Value error, must contain at least one non-whitespace character",
+      "input": "   "
+    }
+  ]
+}
+```
+
+Other expected responses:
+
+| Status | Code / response | Meaning |
+| --- | --- | --- |
+| `404` | `{"detail":"Incident not found"}` | The incident ID does not exist. |
+| `413` | `{"detail":{"code":"request_too_large","message":"Request body exceeds the configured size limit."}}` | The request body is larger than the configured limit. |
+| `503` | `{"detail":{"code":"database_unavailable","message":"Incident storage is temporarily unavailable."}}` | PostgreSQL could not complete the operation. |
+
+PostgreSQL is required to persist or retrieve incidents. Redis is only a cache:
+when Redis reads or writes fail, reads fall back to PostgreSQL and successful
+database writes are still returned. `/ready` reports `"redis":"degraded"` while
+the database is available, and returns `503` only when PostgreSQL is unavailable.
 
 ---
 
@@ -139,6 +173,37 @@ Add your screenshots under:
 
 ```bash
 pytest -q
+```
+
+Tests use mocked storage operations and do not require running PostgreSQL or Redis.
+
+## Logging and deployment notes
+
+The API writes one JSON log object per line. Set `LOG_LEVEL` to `DEBUG`, `INFO`,
+`WARNING`, or `ERROR` to adjust verbosity; the default is `INFO`. Logs include
+request outcomes, triage decisions, cache hits/misses, and storage failures.
+
+The Docker image runs the API as a non-root `app` user. The Compose database
+credentials are development defaults; replace them and avoid exposing database
+ports when deploying outside a local development environment. `MAX_REQUEST_BYTES`
+can be set to change the default 1 MiB request-body limit.
+
+Rate limiting is intentionally placed at the reverse proxy or API gateway so it
+can be shared across application workers. The following Nginx configuration is
+commented out; enable and tune it in the proxy's `http` and `server` contexts
+before exposing the service publicly:
+
+```nginx
+# http {
+#     limit_req_zone $binary_remote_addr zone=triage:10m rate=10r/s;
+#
+#     server {
+#         location = /incidents/triage {
+#             limit_req zone=triage burst=20 nodelay;
+#             proxy_pass http://api:8000;
+#         }
+#     }
+# }
 ```
 
 ---
