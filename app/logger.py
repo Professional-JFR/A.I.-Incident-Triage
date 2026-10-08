@@ -1,7 +1,10 @@
 import json
 import logging
 import os
+from contextvars import ContextVar
 from datetime import datetime, timezone
+
+correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 
 class JsonFormatter(logging.Formatter):
@@ -19,6 +22,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "correlation_id": correlation_id_var.get(),
         }
         payload.update(
             {

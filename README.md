@@ -161,7 +161,9 @@ These baseline metrics validate functional correctness of the **A.I.-assisted tr
 
 ## Demo Evidence
 
-Add your screenshots under:
+Screenshots of a local Docker Compose run (health/readiness checks, triage request,
+incident retrieval). To reproduce them, follow the Quick Start and the demo commands above.
+
 <img width="937" height="95" alt="AI Triage Screenshot 1" src="https://github.com/user-attachments/assets/ed34d60f-bc36-46e7-82be-2ab178aa8790" />
 <img width="1012" height="457" alt="AI Triage Screenshot 2" src="https://github.com/user-attachments/assets/1de3ad86-c9ff-4cb0-a8f8-186fec68dccc" />
 <img width="1602" height="307" alt="AI Triage Screenshot 3" src="https://github.com/user-attachments/assets/21df9004-396d-422f-b758-3593755a7eb7" />
@@ -169,13 +171,102 @@ Add your screenshots under:
 
 ---
 
+## API Reference
+
+Interactive OpenAPI docs are served at `/docs` (Swagger UI), `/redoc`, and `/openapi.json`.
+All endpoints declare response models: `TriageOut`, `IncidentDetailOut`, `HealthOut`,
+`ReadyOut`, and `ErrorOut`. Non-validation errors use one envelope:
+
+```json
+{"detail": {"code": "database_unavailable", "message": "Incident storage is temporarily unavailable."}}
+```
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Domain validation failed (`validation_error`). |
+| `404` | Incident not found (`not_found`). |
+| `413` | Request body too large (`request_too_large`). |
+| `422` | Request schema validation failed (FastAPI field errors). |
+| `500` | Unexpected triage failure (`triage_failed`). |
+| `503` | PostgreSQL unavailable (`database_unavailable`). |
+
+Every response carries an `X-Request-ID` header (a valid inbound value is reused). The same
+ID appears as `correlation_id` in every JSON log line for that request.
+
+## Configuration
+
+Settings are read and validated at startup (invalid values fail fast with a
+`ConfigurationError` naming the variable). Variables: `POSTGRES_HOST`, `POSTGRES_PORT`,
+`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`, `REDIS_URL`,
+`MAX_REQUEST_BYTES`, `LOG_LEVEL`, `CACHE_TTL_SECONDS`, `RECENT_INCIDENT_LIMIT`,
+`STARTUP_DB_RETRIES`, `STARTUP_DB_RETRY_DELAY_SECONDS`.
+
+## Database migrations
+
+Schema changes are managed with Alembic (`alembic/versions`). The Docker image and Compose
+file run `alembic upgrade head` before starting the API. Locally:
+
+```bash
+alembic upgrade head      # apply migrations (creates indices on created_at, service)
+alembic downgrade base    # roll back
+```
+
+The API refuses to start if the schema is missing and tells you to run the migration.
+
+## Metrics and observability
+
+Prometheus metrics are exposed at `GET /metrics`:
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `triage_decisions_total{severity}` | counter | Decisions per severity. |
+| `incidents_triaged_total`, `duplicates_detected_total` | counter | Duplicate rate = duplicates / triaged. |
+| `cache_operations_total{result}` | counter | `hit`, `miss`, `error` lookups. |
+| `http_request_duration_seconds{method,path,status}` | histogram | API latency (use `histogram_quantile`). |
+| `db_query_duration_seconds{operation}` | histogram | Database latency. |
+| `validation_errors_total{field}` | counter | Validation errors by field. |
+
+Example: `histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))`.
+
+## Architecture decision records
+
+- **ADR-1 Service layer:** routes in `app/main.py` delegate to `app/services/*`, which use
+  `app/persistence/database.py` (PostgreSQL) and `app/persistence/cache.py` (Redis).
+- **ADR-2 Redis is optional:** cache errors are logged and counted, never raised; PostgreSQL is
+  the source of truth. `/ready` returns `503` only for PostgreSQL failures.
+- **ADR-3 Alembic migrations:** replaces `CREATE TABLE IF NOT EXISTS` at startup so schema is
+  versioned; the first migration is idempotent for pre-existing databases.
+- **ADR-4 Lazy, validated settings:** configuration is loaded with Pydantic Settings at startup,
+  not import time. Startup retries use exponential backoff for transient errors (connection
+  refused, timeouts) and fail immediately on permanent ones (authentication, missing database).
+- **ADR-5 Rule-based triage:** transparent baseline; no model evaluation framework yet.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| Startup fails with `configuration_error` | A variable is invalid; the log names it. |
+| `Unable to connect to PostgreSQL ... permanent` | Check credentials / database name. |
+| `Gave up after N attempts` | PostgreSQL unreachable; check host, port, and network. |
+| `Database schema is missing` | Run `alembic upgrade head`. |
+| `/ready` shows `"redis":"degraded"` | Redis is down; the API still works via PostgreSQL. |
+| `503 database_unavailable` | PostgreSQL failed mid-request; see `storage.*` log events. |
+
+---
+
 ## Testing
 
 ```bash
-pytest -q
+pytest                      # unit + API tests (mocked storage), enforces 80% coverage
+pytest -m integration       # real PostgreSQL + Redis (skipped if unreachable)
 ```
 
-Tests use mocked storage operations and do not require running PostgreSQL or Redis.
+Integration tests live in `tests/integration`. Start dependencies with
+`docker compose up -d postgres redis` and run
+`POSTGRES_HOST=localhost REDIS_URL=redis://localhost:6379/0 pytest -m integration`.
+To add a test, mark it with `unit`, `integration`, or `e2e`; use the `client` fixture
+(mocked storage, `SKIP_STARTUP_INIT=1`) for unit tests and the `api`, `db`, `redis_cache`,
+`redis_down`, and `sample_incident` fixtures for integration tests.
 
 ## Logging and deployment notes
 
