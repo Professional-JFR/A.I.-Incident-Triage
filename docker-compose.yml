@@ -25,6 +25,7 @@ services:
 
   api:
     build: .
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     environment:
       POSTGRES_DB: incident_triage
       POSTGRES_USER: postgres
@@ -34,6 +35,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       MAX_REQUEST_BYTES: 1048576
       LOG_LEVEL: INFO
+      CACHE_TTL_SECONDS: 3600
+      STARTUP_DB_RETRIES: 20
     ports:
       - "8000:8000"
     depends_on:
