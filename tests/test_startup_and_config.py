@@ -54,6 +54,15 @@ def test_dsn_built_from_parts_and_override(env) -> None:
     assert get_settings().db_dsn == "postgresql://example/db"
 
 
+def test_settings_load_dotenv_file(env, monkeypatch, tmp_path) -> None:
+    env()
+    monkeypatch.delenv("POSTGRES_DB", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("POSTGRES_DB=from_dotenv\n", encoding="utf-8")
+
+    assert get_settings().postgres_db == "from_dotenv"
+
+
 def test_startup_fails_clearly_on_bad_config(env) -> None:
     env(SKIP_STARTUP_INIT="0", STARTUP_DB_RETRIES="0")
     with pytest.raises(ConfigurationError):

@@ -2,6 +2,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Request, status
@@ -34,7 +35,7 @@ logger = configure_logging()
 CORRELATION_HEADER = "X-Request-ID"
 _VALID_CORRELATION_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-ERROR_RESPONSES = {
+ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorOut, "description": "Domain validation failed."},
     403: {"model": ErrorOut, "description": "Forbidden."},
     404: {"model": ErrorOut, "description": "Resource not found."},
