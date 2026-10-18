@@ -3,6 +3,9 @@ def test_health_smoke(client) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert "content-security-policy" in response.headers
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["permissions-policy"]
 
 
 def test_triage_smoke(client, monkeypatch) -> None:
@@ -17,7 +20,9 @@ def test_triage_smoke(client, monkeypatch) -> None:
             "status": "triaged",
         }
 
-    monkeypatch.setattr("app.services.incident_service.create_incident_record", fake_create_incident_record)
+    monkeypatch.setattr(
+        "app.services.incident_service.create_incident_record", fake_create_incident_record
+    )
 
     payload = {
         "title": "Payment API latency spike",
@@ -104,11 +109,16 @@ def test_metrics_endpoint_exposes_application_metrics(client, monkeypatch) -> No
     monkeypatch.setattr(
         "app.services.incident_service.create_incident_record",
         lambda **kw: {
-            "incident_id": "INC-1", "predicted_severity": kw["predicted_severity"],
-            "duplicate_of": None, "runbook_suggestion": kw["runbook_suggestion"], "status": "triaged",
+            "incident_id": "INC-1",
+            "predicted_severity": kw["predicted_severity"],
+            "duplicate_of": None,
+            "runbook_suggestion": kw["runbook_suggestion"],
+            "status": "triaged",
         },
     )
-    client.post("/incidents/triage", json={"title": "Total outage", "description": "everything is down"})
+    client.post(
+        "/incidents/triage", json={"title": "Total outage", "description": "everything is down"}
+    )
     client.post("/incidents/triage", json={"title": "  ", "description": "x"})
 
     body = client.get("/metrics").text
@@ -144,11 +154,101 @@ def test_domain_exception_returns_structured_error(client, monkeypatch) -> None:
 
 def test_get_incident_uses_detail_model(client, monkeypatch) -> None:
     record = {
-        "incident_id": "INC-1", "title": "t", "description": "d", "service": None, "source": None,
-        "timestamp": None, "predicted_severity": "low", "duplicate_of": None,
-        "runbook_suggestion": "RB-000", "status": "triaged",
+        "incident_id": "INC-1",
+        "title": "t",
+        "description": "d",
+        "service": None,
+        "source": None,
+        "timestamp": None,
+        "predicted_severity": "low",
+        "duplicate_of": None,
+        "runbook_suggestion": "RB-000",
+        "status": "triaged",
     }
     monkeypatch.setattr("app.services.incident_service.get_incident", lambda incident_id: record)
 
     assert client.get("/incidents/INC-1").json() == record
     assert "IncidentDetailOut" in client.get("/openapi.json").text
+
+
+def test_api_key_auth_is_optional_and_public_probes_can_be_protected(client, monkeypatch) -> None:
+    from app.config import reset_settings_cache
+
+    monkeypatch.setenv("API_KEY_AUTH_ENABLED", "true")
+    monkeypatch.setenv("API_KEY", "local-test-key")
+    reset_settings_cache()
+    monkeypatch.setattr("app.services.incident_service.get_incident", lambda incident_id: None)
+    monkeypatch.setattr("app.main.database.ping", lambda: True)
+    monkeypatch.setattr("app.main.cache.ping", lambda: True)
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/ready").status_code == 200
+    assert client.get("/metrics").status_code == 200
+    assert client.get("/incidents/INC-MISSING").status_code == 401
+    assert (
+        client.get("/incidents/INC-MISSING", headers={"X-API-Key": "local-test-key"}).status_code
+        == 404
+    )
+
+    monkeypatch.setenv("AUTH_PROTECT_PUBLIC_ENDPOINTS", "true")
+    reset_settings_cache()
+    assert client.get("/health").status_code == 401
+    assert client.get("/ready").status_code == 401
+    assert client.get("/metrics").status_code == 401
+    reset_settings_cache()
+
+
+def test_rate_limiter_is_optional_and_limits_triage(client, monkeypatch) -> None:
+    from app.config import reset_settings_cache
+    from app.main import _rate_limit_windows
+
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_REQUESTS", "1")
+    monkeypatch.setenv("RATE_LIMIT_WINDOW_SECONDS", "60")
+    reset_settings_cache()
+    _rate_limit_windows.clear()
+    monkeypatch.setattr("app.services.incident_service.fetch_recent_incidents", lambda limit=50: [])
+    monkeypatch.setattr(
+        "app.services.incident_service.create_incident_record",
+        lambda **kw: {
+            "incident_id": "INC-RATE",
+            "predicted_severity": kw["predicted_severity"],
+            "duplicate_of": None,
+            "runbook_suggestion": kw["runbook_suggestion"],
+            "status": "triaged",
+        },
+    )
+    payload = {"title": "API timeout", "description": "Request timed out"}
+
+    assert client.post("/incidents/triage", json=payload).status_code == 200
+    limited = client.post("/incidents/triage", json=payload)
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+    reset_settings_cache()
+
+
+def test_idempotency_header_is_hashed_before_passing_to_service(client, monkeypatch) -> None:
+    import hashlib
+
+    captured = {}
+
+    def fake_triage(payload, recent_limit, idempotency_key):
+        captured["key"] = idempotency_key
+        return {
+            "incident_id": "INC-KEY",
+            "predicted_severity": "low",
+            "duplicate_of": None,
+            "runbook_suggestion": "RB-000",
+            "status": "triaged",
+        }
+
+    monkeypatch.setattr("app.main.triage_service.triage_incident", fake_triage)
+    response = client.post(
+        "/incidents/triage",
+        json={"title": "unicode 支付", "description": "échec"},
+        headers={"Idempotency-Key": "operation-1"},
+    )
+
+    assert response.status_code == 200
+    assert captured["key"] == hashlib.sha256(b"POST:/incidents/triage:operation-1").hexdigest()
+    assert captured["key"] != "operation-1"

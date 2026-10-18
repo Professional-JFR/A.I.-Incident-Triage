@@ -20,6 +20,7 @@ def create_incident_record(
     predicted_severity: str,
     duplicate_of: str | None,
     runbook_suggestion: str,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Persist a triaged incident and best-effort cache its record.
 
@@ -43,7 +44,7 @@ def create_incident_record(
         "status": "triaged",
     }
     try:
-        database.insert_incident(record, occurred_at)
+        record = database.insert_incident(record, occurred_at, idempotency_key)
     except psycopg.Error as exc:
         logger.exception(
             "Incident persistence failed",
@@ -55,8 +56,21 @@ def create_incident_record(
         )
         raise
     cache.cache_incident(record)
-    logger.info("Incident persisted", extra={"event": "storage.incident_persisted", "incident_id": incident_id})
+    logger.info(
+        "Incident persisted",
+        extra={"event": "storage.incident_persisted", "incident_id": incident_id},
+    )
     return record
+
+
+def get_idempotent_result(key_hash: str) -> dict | None:
+    """Return the best-effort cached response for an idempotency key."""
+    return cache.get_idempotency_result(key_hash)
+
+
+def cache_idempotent_result(key_hash: str, result: dict) -> None:
+    """Cache the committed response for fast idempotent replays."""
+    cache.cache_idempotency_result(key_hash, result)
 
 
 def fetch_recent_incidents(limit: int = 20) -> list[dict]:

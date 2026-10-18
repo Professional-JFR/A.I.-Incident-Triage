@@ -8,8 +8,16 @@ from app.persistence import cache, database
 from app.services import incident_service
 
 ROW = (
-    "INC-123", "Payment outage", "Checkout is unavailable", "payments", "monitoring",
-    None, "critical", None, "RB-002", "triaged",
+    "INC-123",
+    "Payment outage",
+    "Checkout is unavailable",
+    "payments",
+    "monitoring",
+    None,
+    "critical",
+    None,
+    "RB-002",
+    "triaged",
 )
 
 
@@ -63,7 +71,9 @@ def test_missing_incident_returns_none(monkeypatch, fake_redis) -> None:
 
 
 def test_database_lookup_failure_is_raised(monkeypatch, fake_redis) -> None:
-    monkeypatch.setattr(database, "connect", MagicMock(side_effect=psycopg.OperationalError("down")))
+    monkeypatch.setattr(
+        database, "connect", MagicMock(side_effect=psycopg.OperationalError("down"))
+    )
 
     with pytest.raises(psycopg.Error):
         incident_service.get_incident("INC-123")
@@ -75,15 +85,53 @@ def test_cache_write_failure_does_not_raise(fake_redis) -> None:
     cache.cache_incident({"incident_id": "INC-123"})
 
 
+def test_idempotency_cache_failure_falls_back_without_raising(fake_redis) -> None:
+    fake_redis.get.side_effect = redis.ConnectionError
+    fake_redis.setex.side_effect = redis.ConnectionError
+
+    assert cache.get_idempotency_result("hash") is None
+    cache.cache_idempotency_result("hash", {"incident_id": "INC-123"})
+
+
+def test_idempotent_insert_returns_database_canonical_record(monkeypatch) -> None:
+    connection = _mock_connection()
+    monkeypatch.setattr(database, "connect", lambda: connection)
+    record = {
+        "incident_id": "INC-LOCAL",
+        "title": "Payment outage",
+        "description": "Checkout is unavailable",
+        "service": "payments",
+        "source": "monitoring",
+        "timestamp": None,
+        "predicted_severity": "critical",
+        "duplicate_of": None,
+        "runbook_suggestion": "RB-002",
+        "status": "triaged",
+    }
+
+    inserted = database.insert_incident(record, None, "key-hash")
+
+    assert inserted["incident_id"] == "INC-123"
+    assert (
+        connection.cursor.return_value.__enter__.return_value.execute.call_args[0][1][-1]
+        == "key-hash"
+    )
+
+
 def test_incident_write_is_persisted_when_cache_is_unavailable(monkeypatch, fake_redis) -> None:
     connection = _mock_connection()
     monkeypatch.setattr(database, "connect", lambda: connection)
     fake_redis.setex.side_effect = redis.ConnectionError
 
     record = incident_service.create_incident_record(
-        title="Payment outage", description="Checkout is unavailable", service="payments",
-        source="monitoring", occurred_at=None, predicted_severity="critical",
-        duplicate_of=None, runbook_suggestion="RB-002",
+        title="Payment outage",
+        description="Checkout is unavailable",
+        service="payments",
+        source="monitoring",
+        occurred_at=None,
+        predicted_severity="critical",
+        duplicate_of=None,
+        runbook_suggestion="RB-002",
     )
 
     assert record["status"] == "triaged"
@@ -91,12 +139,20 @@ def test_incident_write_is_persisted_when_cache_is_unavailable(monkeypatch, fake
 
 
 def test_incident_write_failure_is_raised(monkeypatch, fake_redis) -> None:
-    monkeypatch.setattr(database, "connect", MagicMock(side_effect=psycopg.OperationalError("down")))
+    monkeypatch.setattr(
+        database, "connect", MagicMock(side_effect=psycopg.OperationalError("down"))
+    )
 
     with pytest.raises(psycopg.Error):
         incident_service.create_incident_record(
-            title="t", description="d", service=None, source=None, occurred_at=None,
-            predicted_severity="low", duplicate_of=None, runbook_suggestion="RB-000",
+            title="t",
+            description="d",
+            service=None,
+            source=None,
+            occurred_at=None,
+            predicted_severity="low",
+            duplicate_of=None,
+            runbook_suggestion="RB-000",
         )
 
 
@@ -109,7 +165,9 @@ def test_fetch_recent_incidents(monkeypatch) -> None:
 
 
 def test_fetch_recent_failure_is_raised(monkeypatch) -> None:
-    monkeypatch.setattr(database, "connect", MagicMock(side_effect=psycopg.OperationalError("down")))
+    monkeypatch.setattr(
+        database, "connect", MagicMock(side_effect=psycopg.OperationalError("down"))
+    )
 
     with pytest.raises(psycopg.Error):
         incident_service.fetch_recent_incidents()

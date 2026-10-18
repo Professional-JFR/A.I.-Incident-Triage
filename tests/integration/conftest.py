@@ -42,9 +42,15 @@ def pg_schema():
                 service TEXT, source TEXT, occurred_at TIMESTAMPTZ,
                 predicted_severity TEXT NOT NULL, duplicate_of TEXT,
                 runbook_suggestion TEXT NOT NULL, status TEXT NOT NULL,
+                idempotency_key TEXT UNIQUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
+        )
+        conn.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS idempotency_key TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_idempotency_key "
+            "ON incidents (idempotency_key)"
         )
     yield
 
@@ -72,10 +78,13 @@ def redis_cache():
 
 
 @pytest.fixture
-def api(db):
+def api(db, monkeypatch):
     """Test client wired to real PostgreSQL; Redis may be absent (degraded)."""
+    monkeypatch.setenv("SKIP_STARTUP_INIT", "0")
+    reset_settings_cache()
     with TestClient(app) as test_client:
         yield test_client
+    reset_settings_cache()
 
 
 @pytest.fixture

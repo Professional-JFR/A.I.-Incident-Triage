@@ -76,6 +76,7 @@ def get_cached_incident(incident_id: str) -> dict | None:
             },
         )
         return None
+
     if cached:
         try:
             record = json.loads(cast(str, cached))
@@ -91,7 +92,9 @@ def get_cached_incident(incident_id: str) -> dict | None:
         else:
             if isinstance(record, dict) and record.get("incident_id") == incident_id:
                 CACHE_OPERATIONS.labels(result="hit").inc()
-                logger.info("Incident cache hit", extra={"event": "cache.hit", "incident_id": incident_id})
+                logger.info(
+                    "Incident cache hit", extra={"event": "cache.hit", "incident_id": incident_id}
+                )
                 return record
             logger.warning(
                 "Incident cache entry was invalid; falling back to PostgreSQL",
@@ -103,3 +106,41 @@ def get_cached_incident(incident_id: str) -> dict | None:
         extra={"event": "cache.miss", "incident_id": incident_id},
     )
     return None
+
+
+def get_idempotency_result(key_hash: str) -> dict | None:
+    """Return a previously cached triage response, or ``None`` on cache failure."""
+    try:
+        cached = get_client().get(f"idempotency:{key_hash}")
+    except redis.RedisError as exc:
+        logger.warning(
+            "Idempotency cache lookup failed; PostgreSQL will enforce uniqueness",
+            extra={"event": "idempotency.cache_read_failed", "error_type": type(exc).__name__},
+        )
+        return None
+    if not cached:
+        return None
+    try:
+        result = json.loads(cast(str, cached))
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Invalid idempotency cache entry ignored",
+            extra={"event": "idempotency.cache_invalid", "error_type": type(exc).__name__},
+        )
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def cache_idempotency_result(key_hash: str, result: dict) -> None:
+    """Cache a successful idempotent result; PostgreSQL remains authoritative."""
+    try:
+        get_client().setex(
+            f"idempotency:{key_hash}",
+            get_settings().cache_ttl_seconds,
+            json.dumps(result, default=str),
+        )
+    except redis.RedisError as exc:
+        logger.warning(
+            "Idempotency cache write failed; PostgreSQL remains authoritative",
+            extra={"event": "idempotency.cache_write_failed", "error_type": type(exc).__name__},
+        )

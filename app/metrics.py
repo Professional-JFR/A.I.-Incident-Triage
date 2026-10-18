@@ -16,6 +16,11 @@ INCIDENTS_TRIAGED = Counter("incidents_triaged_total", "Total incidents triaged.
 DUPLICATES_DETECTED = Counter(
     "duplicates_detected_total", "Incidents flagged as duplicates of an earlier incident."
 )
+TRIAGE_PROVIDER_FALLBACKS = Counter(
+    "triage_provider_fallbacks_total",
+    "Triage requests that fell back to rule-based decisions.",
+    ["provider"],
+)
 CACHE_OPERATIONS = Counter(
     "cache_operations_total", "Cache lookups by result (hit, miss, error).", ["result"]
 )
