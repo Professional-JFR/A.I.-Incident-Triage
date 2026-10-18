@@ -302,7 +302,7 @@ async def log_requests_and_set_security_headers(request: Request, call_next):
 
 
 def _authorize_request(request: Request) -> bool:
-    """Check the optional API key using fixed-length constant-time digests."""
+    """Check the optional API key using constant-time comparison."""
     settings = get_settings()
     public_paths = {"/health", "/ready", "/metrics"}
     if not settings.api_key_auth_enabled or (
@@ -311,7 +311,7 @@ def _authorize_request(request: Request) -> bool:
         return True
     supplied = request.headers.get("X-API-Key", "").encode("utf-8")
     expected = (settings.api_key or "").encode("utf-8")
-    return hmac.compare_digest(hashlib.sha256(supplied).digest(), hashlib.sha256(expected).digest())
+    return hmac.compare_digest(supplied, expected)
 
 
 def _rate_limit_exceeded(client_id: str, now: float | None = None) -> bool:
