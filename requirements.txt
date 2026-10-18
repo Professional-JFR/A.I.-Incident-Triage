@@ -7,7 +7,7 @@ pydantic==2.8.2
 pydantic-settings==2.4.0
 python-dotenv==1.2.2
 psycopg-pool==3.2.8
-prometheus-client==0.20.0
+prometheus-client==0.26.0
 alembic==1.13.2
 SQLAlchemy==2.0.32
 pytest==9.1.1
