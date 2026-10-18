@@ -1,0 +1,10 @@
+[
+  {"title": "Full outage of checkout", "description": "Site is down for all users", "service": "web", "severity": "critical", "runbook": "RB-000"},
+  {"title": "Suspected data breach", "description": "Unusual access to customer records", "service": "auth", "severity": "critical", "runbook": "RB-005"},
+  {"title": "Payment API latency spike", "description": "Timeouts and degraded checkout responses", "service": "payments-api", "severity": "high", "runbook": "RB-002"},
+  {"title": "Error spike on login", "description": "Users see 500 errors", "service": "auth", "severity": "high", "runbook": "RB-005"},
+  {"title": "Slow dashboard", "description": "Queries are slow in the database", "service": "reporting", "severity": "medium", "runbook": "RB-001"},
+  {"title": "Retry warnings in worker", "description": "Redis connection retry messages", "service": "worker", "severity": "medium", "runbook": "RB-004"},
+  {"title": "Typo on settings page", "description": "Label misspelled", "service": "web", "severity": "low", "runbook": "RB-000"},
+  {"title": "Update docs", "description": "Add onboarding notes", "service": null, "severity": "low", "runbook": "RB-000"}
+]

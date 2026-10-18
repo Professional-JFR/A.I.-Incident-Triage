@@ -1,7 +1,6 @@
 """Application settings, loaded and validated at startup rather than import time."""
 
 from functools import lru_cache
-from typing import Optional
 from urllib.parse import quote
 
 from pydantic import ValidationError as PydanticValidationError
@@ -21,7 +20,7 @@ class Settings(BaseSettings):
     postgres_db: str = "incident_triage"
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
-    database_url: Optional[str] = None
+    database_url: str | None = None
     redis_url: str = "redis://redis:6379/0"
     max_request_bytes: int = 1048576
     log_level: str = "INFO"

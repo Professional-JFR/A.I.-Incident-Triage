@@ -1,17 +1,15 @@
-import logging
 import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
 from app.exceptions import (
@@ -136,7 +134,7 @@ class RequestTooLarge(Exception):
 class RequestSizeLimitMiddleware:
     """Reject oversized HTTP request bodies before passing them to the API."""
 
-    def __init__(self, app, max_request_bytes: Optional[int] = None) -> None:
+    def __init__(self, app, max_request_bytes: int | None = None) -> None:
         """Store the wrapped app and an optional override for the size limit."""
         self.app = app
         self._max_request_bytes = max_request_bytes
@@ -292,7 +290,7 @@ def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-def _error_response(status_code: int, code: str, message: str, details: Optional[dict] = None) -> JSONResponse:
+def _error_response(status_code: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
     """Build the structured error envelope."""
     detail: dict = {"code": code, "message": message}
     if details:

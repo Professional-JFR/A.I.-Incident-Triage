@@ -3,7 +3,6 @@
 import json
 import logging
 from functools import lru_cache
-from typing import Optional
 
 import redis
 
@@ -61,7 +60,7 @@ def cache_incident(record: dict) -> None:
         )
 
 
-def get_cached_incident(incident_id: str) -> Optional[dict]:
+def get_cached_incident(incident_id: str) -> dict | None:
     """Return a valid cached incident, or ``None`` on miss, error, or invalid entry."""
     try:
         cached = get_client().get(f"incident:{incident_id}")

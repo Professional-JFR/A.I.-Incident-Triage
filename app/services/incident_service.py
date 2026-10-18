@@ -3,7 +3,6 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
 
 import psycopg
 
@@ -15,11 +14,11 @@ logger = logging.getLogger("app.incident_service")
 def create_incident_record(
     title: str,
     description: str,
-    service: Optional[str],
-    source: Optional[str],
-    occurred_at: Optional[datetime],
+    service: str | None,
+    source: str | None,
+    occurred_at: datetime | None,
     predicted_severity: str,
-    duplicate_of: Optional[str],
+    duplicate_of: str | None,
     runbook_suggestion: str,
 ) -> dict:
     """Persist a triaged incident and best-effort cache its record.
@@ -76,7 +75,7 @@ def fetch_recent_incidents(limit: int = 20) -> list[dict]:
         raise
 
 
-def get_incident(incident_id: str) -> Optional[dict]:
+def get_incident(incident_id: str) -> dict | None:
     """Retrieve an incident from Redis, falling back to PostgreSQL.
 
     Returns:

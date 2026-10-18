@@ -2,7 +2,8 @@
 
 import functools
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from prometheus_client import Counter, Histogram
 

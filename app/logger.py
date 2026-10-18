@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 
@@ -18,7 +18,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Serialize a log record and its structured fields as JSON."""
         payload = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
