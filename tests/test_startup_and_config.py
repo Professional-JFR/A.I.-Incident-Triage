@@ -90,8 +90,60 @@ def test_startup_tolerates_redis(env, monkeypatch, redis_ok) -> None:
     env(SKIP_STARTUP_INIT="0")
     monkeypatch.setattr(database, "wait_for_database", lambda: None)
     monkeypatch.setattr(database, "schema_ready", lambda: True)
+    monkeypatch.setattr(database, "open_pool", lambda: None)
     monkeypatch.setattr(cache, "ping", lambda: redis_ok)
     main.run_startup_checks()
+
+
+def test_database_pool_uses_configured_bounds(env, monkeypatch) -> None:
+    env(
+        DB_POOL_MIN_SIZE="2",
+        DB_POOL_MAX_SIZE="8",
+        DB_POOL_TIMEOUT_SECONDS="4",
+        DB_CONNECT_TIMEOUT_SECONDS="3",
+    )
+    created = {}
+
+    class FakePool:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(database, "ConnectionPool", FakePool)
+    monkeypatch.setattr(database, "_pool", None)
+
+    database.open_pool()
+    pool = database._pool
+    database.close_pool()
+
+    assert created["min_size"] == 2
+    assert created["max_size"] == 8
+    assert created["timeout"] == 4
+    assert created["kwargs"] == {"connect_timeout": 3}
+    assert pool.closed is True
+
+
+def test_lifespan_closes_storage_clients(monkeypatch) -> None:
+    import asyncio
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(main, "run_startup_checks", lambda: None)
+    close_pool = Mock()
+    close_cache = Mock()
+    monkeypatch.setattr(database, "close_pool", close_pool)
+    monkeypatch.setattr(cache, "close_client", close_cache)
+
+    async def exercise() -> None:
+        async with main.lifespan(main.app):
+            raise RuntimeError("forced shutdown")
+
+    with pytest.raises(RuntimeError, match="forced shutdown"):
+        asyncio.run(exercise())
+    close_pool.assert_called_once_with()
+    close_cache.assert_called_once_with()
 
 
 def test_wait_for_database_permanent_failure(env, monkeypatch) -> None:
@@ -141,8 +193,11 @@ def test_retry_backoff_delays_and_success() -> None:
 def test_retry_does_not_retry_permanent_errors() -> None:
     with pytest.raises(ValueError):
         retry_with_backoff(
-            lambda: (_ for _ in ()).throw(ValueError()), retries=5, base_delay_seconds=0,
-            is_transient=lambda exc: False, sleep=lambda s: None,
+            lambda: (_ for _ in ()).throw(ValueError()),
+            retries=5,
+            base_delay_seconds=0,
+            is_transient=lambda exc: False,
+            sleep=lambda s: None,
         )
 
 

@@ -1,11 +1,14 @@
+import hashlib
+import hmac
 import re
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -34,13 +37,17 @@ from app.services import incident_service, triage_service
 logger = configure_logging()
 CORRELATION_HEADER = "X-Request-ID"
 _VALID_CORRELATION_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_rate_limit_lock = threading.Lock()
+_rate_limit_windows: dict[str, tuple[float, int]] = {}
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ErrorOut, "description": "API key is missing or invalid."},
     400: {"model": ErrorOut, "description": "Domain validation failed."},
     403: {"model": ErrorOut, "description": "Forbidden."},
     404: {"model": ErrorOut, "description": "Resource not found."},
     409: {"model": ErrorOut, "description": "Conflicting request."},
     413: {"model": ErrorOut, "description": "Request body exceeds the size limit."},
+    429: {"model": ErrorOut, "description": "Rate limit exceeded."},
     500: {"model": ErrorOut, "description": "Unexpected server error."},
     503: {"model": ErrorOut, "description": "PostgreSQL is unavailable."},
 }
@@ -95,6 +102,7 @@ def run_startup_checks() -> None:
         message = "Database schema is missing; run 'alembic upgrade head' before starting the API."
         logger.error(message, extra={"event": "startup.schema_missing"})
         raise DatabaseConnectionError(message, transient=False)
+    database.open_pool()
     logger.info("PostgreSQL connection verified", extra={"event": "startup.database_ok"})
 
     if cache.ping():
@@ -111,13 +119,21 @@ async def lifespan(_: FastAPI):
     """Run startup checks and release resources on graceful shutdown."""
     logger.info("Starting application", extra={"event": "startup.begin"})
     run_startup_checks()
-    yield
-    logger.info("Shutting down application", extra={"event": "shutdown.begin"})
     try:
-        cache.close_client()
-    except Exception:  # pragma: no cover - best-effort cleanup
-        logger.warning("Redis client close failed", extra={"event": "shutdown.cache_close_failed"})
-    logger.info("Shutdown complete", extra={"event": "shutdown.complete"})
+        yield
+    finally:
+        logger.info("Shutting down application", extra={"event": "shutdown.begin"})
+        try:
+            database.close_pool()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            logger.warning(
+                "PostgreSQL pool close failed", extra={"event": "shutdown.database_close_failed"}
+            )
+        try:
+            cache.close_client()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            logger.warning("Redis client close failed", extra={"event": "shutdown.cache_close_failed"})
+        logger.info("Shutdown complete", extra={"event": "shutdown.complete"})
 
 
 app = FastAPI(
@@ -160,7 +176,7 @@ class RequestSizeLimitMiddleware:
             declared_length = 0
         if declared_length > self.max_request_bytes:
             response = JSONResponse(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 content={
                     "detail": {
                         "code": "request_too_large",
@@ -194,7 +210,7 @@ class RequestSizeLimitMiddleware:
         except RequestTooLarge:
             if not response_started:
                 response = JSONResponse(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     content={
                         "detail": {
                             "code": "request_too_large",
@@ -221,11 +237,33 @@ async def log_requests_and_set_security_headers(request: Request, call_next):
     started_at = time.monotonic()
     try:
         try:
-            response = await call_next(request)
+            if not _authorize_request(request):
+                response = _error_response(
+                    status.HTTP_401_UNAUTHORIZED,
+                    "authentication_required",
+                    "A valid X-API-Key header is required.",
+                )
+            elif (
+                request.url.path == "/incidents/triage"
+                and get_settings().rate_limit_enabled
+                and _rate_limit_exceeded(request.client.host if request.client else "unknown")
+            ):
+                response = _error_response(
+                    status.HTTP_429_TOO_MANY_REQUESTS,
+                    "rate_limit_exceeded",
+                    "Too many triage requests.",
+                )
+                response.headers["Retry-After"] = str(get_settings().rate_limit_window_seconds)
+            else:
+                response = await call_next(request)
         except Exception:
             logger.exception(
                 "Request failed before a response was produced",
-                extra={"event": "http.request_failed", "method": request.method, "path": request.url.path},
+                extra={
+                    "event": "http.request_failed",
+                    "method": request.method,
+                    "path": request.url.path,
+                },
             )
             raise
 
@@ -240,6 +278,14 @@ async def log_requests_and_set_security_headers(request: Request, call_next):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+        )
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         logger.info(
             "HTTP request completed",
             extra={
@@ -253,6 +299,38 @@ async def log_requests_and_set_security_headers(request: Request, call_next):
         return response
     finally:
         correlation_id_var.reset(token)
+
+
+def _authorize_request(request: Request) -> bool:
+    """Check the optional API key using fixed-length constant-time digests."""
+    settings = get_settings()
+    public_paths = {"/health", "/ready", "/metrics"}
+    if not settings.api_key_auth_enabled or (
+        request.url.path in public_paths and not settings.auth_protect_public_endpoints
+    ):
+        return True
+    supplied = request.headers.get("X-API-Key", "").encode("utf-8")
+    expected = (settings.api_key or "").encode("utf-8")
+    return hmac.compare_digest(hashlib.sha256(supplied).digest(), hashlib.sha256(expected).digest())
+
+
+def _rate_limit_exceeded(client_id: str, now: float | None = None) -> bool:
+    """Apply a process-local fixed-window limit to triage requests."""
+    settings = get_settings()
+    current = time.monotonic() if now is None else now
+    with _rate_limit_lock:
+        start, count = _rate_limit_windows.get(client_id, (current, 0))
+        if current - start >= settings.rate_limit_window_seconds:
+            start, count = current, 0
+        _rate_limit_windows[client_id] = (start, count + 1)
+        if len(_rate_limit_windows) > 4096:
+            expiry = current - settings.rate_limit_window_seconds
+            for key, (window_start, _) in list(_rate_limit_windows.items()):
+                if window_start < expiry:
+                    del _rate_limit_windows[key]
+            if len(_rate_limit_windows) > 4096:
+                _rate_limit_windows.pop(next(iter(_rate_limit_windows)))
+        return count >= settings.rate_limit_requests
 
 
 @app.get("/health", response_model=HealthOut, summary="Liveness check")
@@ -291,7 +369,9 @@ def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-def _error_response(status_code: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
+def _error_response(
+    status_code: int, code: str, message: str, details: dict | None = None
+) -> JSONResponse:
     """Build the structured error envelope."""
     detail: dict = {"code": code, "message": message}
     if details:
@@ -342,7 +422,9 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Return HTTP errors in the structured envelope (dict details pass through)."""
     if isinstance(exc.detail, dict):
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers
+        )
     code = "not_found" if exc.status_code == 404 else "http_error"
     return JSONResponse(
         status_code=exc.status_code,
@@ -357,13 +439,27 @@ async def handle_http_exception(request: Request, exc: StarletteHTTPException) -
     summary="Triage and store an incident",
     responses=ERROR_RESPONSES,
 )
-def triage_incident(payload: IncidentIn) -> TriageOut:
+def triage_incident(
+    payload: IncidentIn,
+    idempotency_key: str | None = Header(
+        default=None, alias="Idempotency-Key", min_length=1, max_length=256
+    ),
+) -> TriageOut:
     """Classify, match, persist, and return a newly submitted incident.
 
     Predicts severity, looks for duplicates among recent incidents, suggests a
     runbook, then stores the incident. Invalid input returns 422.
     """
-    return triage_service.triage_incident(payload, get_settings().recent_incident_limit)
+    key_hash = (
+        hashlib.sha256(f"POST:/incidents/triage:{idempotency_key}".encode()).hexdigest()
+        if idempotency_key is not None
+        else None
+    )
+    return triage_service.triage_incident(
+        payload,
+        get_settings().recent_incident_limit,
+        idempotency_key=key_hash,
+    )
 
 
 @app.get(

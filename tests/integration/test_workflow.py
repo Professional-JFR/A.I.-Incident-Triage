@@ -25,6 +25,35 @@ def test_duplicate_is_detected_against_persisted_incident(api, sample_incident) 
     assert second["duplicate_of"] == first["incident_id"]
 
 
+def test_concurrent_idempotency_key_returns_one_canonical_incident(api, sample_incident) -> None:
+    def submit(_: int) -> str:
+        response = api.post(
+            "/incidents/triage",
+            json=sample_incident,
+            headers={"Idempotency-Key": "same-client-operation"},
+        )
+        assert response.status_code == 200
+        return response.json()["incident_id"]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        ids = list(pool.map(submit, range(12)))
+
+    assert len(set(ids)) == 1
+    with database.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM incidents").fetchone()[0] == 1
+
+
+def test_idempotency_uses_database_when_redis_is_down(api, redis_down, sample_incident) -> None:
+    headers = {"Idempotency-Key": "redis-degraded-operation"}
+
+    first = api.post("/incidents/triage", json=sample_incident, headers=headers)
+    second = api.post("/incidents/triage", json=sample_incident, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["incident_id"] == first.json()["incident_id"]
+
+
 def test_cache_hit_and_miss(api, redis_cache, sample_incident) -> None:
     incident_id = api.post("/incidents/triage", json=sample_incident).json()["incident_id"]
     assert redis_cache.get(f"incident:{incident_id}") is not None
@@ -46,6 +75,7 @@ def test_cache_degradation_when_redis_unavailable(api, redis_down, sample_incide
 def test_database_failure_and_recovery(api, sample_incident, monkeypatch) -> None:
     monkeypatch.setenv("POSTGRES_PORT", "1")
     reset_settings_cache()
+    database.close_pool()
     failed = api.post("/incidents/triage", json=sample_incident)
     assert failed.status_code == 503
     assert failed.json()["detail"]["code"] == "database_unavailable"

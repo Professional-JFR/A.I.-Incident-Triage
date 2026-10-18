@@ -55,3 +55,10 @@ def test_accepts_text_at_maximum_field_lengths() -> None:
 
     assert len(payload.title) == 200
     assert len(payload.description) == 5000
+
+
+def test_accepts_and_trims_unicode_text() -> None:
+    payload = IncidentIn(title="  支付中断 🔥  ", description="  Échec du service — Привет  ")
+
+    assert payload.title == "支付中断 🔥"
+    assert payload.description == "Échec du service — Привет"
