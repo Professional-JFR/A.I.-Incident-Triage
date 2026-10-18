@@ -1,7 +1,18 @@
 # A.I. Incident Triage Copilot
 
+[![CI](https://github.com/Professional-JFR/A.I.-Incident-Triage/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Professional-JFR/A.I.-Incident-Triage/actions/workflows/ci.yml)
+
 An **A.I.-assisted incident triage backend** that analyzes incident text, predicts severity, suggests likely duplicates, and recommends a runbook.  
 Built for practical backend + AI workflow demonstration using **Python/FastAPI**, **PostgreSQL**, **Redis**, and **Docker**.
+
+## Motivation
+
+Incident responders need a fast, consistent starting point when alerts arrive. This
+service turns an incident report into a severity estimate, a possible duplicate, and
+a runbook suggestion, then stores the result for retrieval. The current classifier
+is intentionally deterministic and rule-based: it is explainable, runs offline, and
+provides a baseline for evaluating future model-backed providers rather than claiming
+production-grade AI accuracy.
 
 ## Tech Stack
 - **Python**
@@ -18,6 +29,28 @@ Built for practical backend + AI workflow demonstration using **Python/FastAPI**
 - **Duplicate detection** against recent incidents
 - **Runbook recommendation** based on incident context
 - **Persistent incident storage** + retrieval by `incident_id`
+
+## Architecture and request flow
+
+```mermaid
+flowchart LR
+    Client --> Middleware["FastAPI middleware<br/>request ID, size limit, logging"]
+    Middleware --> Routes["API routes and Pydantic schemas"]
+    Routes --> Triage["Triage service"]
+    Triage --> Rules["Rule-based triage<br/>severity, duplicate, runbook"]
+    Triage --> IncidentService["Incident service"]
+    IncidentService --> Postgres[("PostgreSQL<br/>source of truth")]
+    IncidentService -. "best-effort cache" .-> Redis[("Redis")]
+    IncidentService --> Metrics["Prometheus metrics"]
+    Middleware --> Logs["JSON logs<br/>correlation ID"]
+```
+
+For `POST /incidents/triage`, the API validates and limits the request, the triage
+service reads recent incidents and applies local rules, and the incident service
+persists the result before returning it. Retrieval checks Redis first and falls back
+to PostgreSQL. Redis is optional; PostgreSQL is required for writes and readiness.
+Routes, orchestration, rules, persistence, configuration, and observability are kept
+in separate modules so each can be tested independently.
 
 ## API Endpoints
 
@@ -110,6 +143,7 @@ cd A.I.-Incident-Triage
 
 ### 2) Run with Docker
 ```bash
+cp .env.example .env
 docker compose up --build -d
 ```
 
@@ -118,6 +152,29 @@ docker compose up --build -d
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
 ```
+
+Compose reads `.env` automatically. The included credentials are for local
+development only; replace them before deploying the stack.
+
+### Local Python development
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+make install
+cp .env.example .env
+```
+
+For a host-run API, start the database and Redis services with
+`docker compose up -d postgres redis`, then run:
+
+```bash
+POSTGRES_HOST=localhost REDIS_URL=redis://localhost:6379/0 alembic upgrade head
+POSTGRES_HOST=localhost REDIS_URL=redis://localhost:6379/0 make run
+```
+
+On PowerShell, set the two environment variables with `$env:POSTGRES_HOST="localhost"`
+and `$env:REDIS_URL="redis://localhost:6379/0"` before running the commands.
 
 ---
 
@@ -195,11 +252,26 @@ ID appears as `correlation_id` in every JSON log line for that request.
 
 ## Configuration
 
-Settings are read and validated at startup (invalid values fail fast with a
-`ConfigurationError` naming the variable). Variables: `POSTGRES_HOST`, `POSTGRES_PORT`,
-`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`, `REDIS_URL`,
-`MAX_REQUEST_BYTES`, `LOG_LEVEL`, `CACHE_TTL_SECONDS`, `RECENT_INCIDENT_LIMIT`,
-`STARTUP_DB_RETRIES`, `STARTUP_DB_RETRY_DELAY_SECONDS`.
+Settings are loaded from environment variables or the root `.env` file and validated
+at startup. Invalid values fail fast with a `ConfigurationError` naming the variable,
+without logging its value.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL hostname (`localhost` for host-run development). |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port. |
+| `POSTGRES_DB` | `incident_triage` | Database name. |
+| `POSTGRES_USER` | `postgres` | Database user. |
+| `POSTGRES_PASSWORD` | `postgres` | Development password; use a secret in deployment. |
+| `DATABASE_URL` | unset | Optional PostgreSQL URL that overrides the connection components above. |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL. |
+| `MAX_REQUEST_BYTES` | `1048576` | Maximum request body size (1 MiB). |
+| `LOG_LEVEL` | `INFO` | Structured logging threshold. |
+| `CACHE_TTL_SECONDS` | `3600` | Redis incident cache lifetime. |
+| `RECENT_INCIDENT_LIMIT` | `50` | Recent incidents considered for duplicate detection. |
+| `STARTUP_DB_RETRIES` | `20` | Startup attempts for transient PostgreSQL connection failures. |
+| `STARTUP_DB_RETRY_DELAY_SECONDS` | `1.5` | Base delay for exponential startup retry backoff. |
+| `SKIP_STARTUP_INIT` | `false` | Test-only switch that skips startup dependency checks; do not enable in deployments. |
 
 ## Database migrations
 
@@ -251,9 +323,22 @@ baseline, not a benchmark of real-world accuracy.
 
 ## Developer workflow
 
-CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest` (80% coverage gate), and the
-evaluation on every push and pull request. Run the same checks locally with
-`pip install ruff && ruff check . && pytest`.
+CI (`.github/workflows/ci.yml`) runs Ruff, mypy, pytest (80% coverage gate), the offline
+evaluation, and a Docker image build on every push and pull request. Dependabot checks
+Python and GitHub Actions dependencies weekly. Common local tasks:
+
+```bash
+make lint       # Ruff checks
+make typecheck  # mypy
+make test       # pytest with coverage gate
+make format     # Ruff autofix and formatter
+make docker     # build and run with Docker Compose
+pre-commit install
+```
+
+The pytest suite is offline by default and mocks storage. Integration tests marked
+`integration` use live PostgreSQL and Redis and are excluded from the default coverage
+run; use `pytest -m integration` with the Compose dependencies running to execute them.
 
 ## Troubleshooting
 
@@ -315,6 +400,7 @@ before exposing the service publicly:
 
 ## Current Scope / Limitations
 - Uses **baseline rule-based AI logic** (intentionally simple, transparent, and demo-friendly)
+- Does not make external LLM/provider calls today; triage output is not a substitute for responder judgment
 - Not yet optimized for high-throughput production scale
 - Evaluation is an offline harness over a small labeled set; no model training pipeline yet
 
@@ -326,6 +412,7 @@ Show a practical, end-to-end backend project that combines **API engineering**, 
 ## Future Improvements
 
 - Replace baseline rule-based triage with a trained NLP/LLM-assisted classification pipeline for higher severity/duplicate accuracy.
+- Add a mockable provider interface with strict output validation, bounded retries/timeouts, and rule-based fallback before enabling a remote model.
 - Add authentication and role-based access control (RBAC) for secure incident operations.
 - Introduce async queue-based processing (e.g., Celery/RQ) for higher-throughput triage workloads.
 - Add observability stack (structured logs, metrics, tracing, dashboards, alerts) for production monitoring.

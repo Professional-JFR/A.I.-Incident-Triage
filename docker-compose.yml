@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: incident_triage
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-incident_triage}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     healthcheck:
@@ -27,16 +27,19 @@ services:
     build: .
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     environment:
-      POSTGRES_DB: incident_triage
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      REDIS_URL: redis://redis:6379/0
-      MAX_REQUEST_BYTES: 1048576
-      LOG_LEVEL: INFO
-      CACHE_TTL_SECONDS: 3600
-      STARTUP_DB_RETRIES: 20
+      POSTGRES_DB: ${POSTGRES_DB:-incident_triage}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-3600}
+      RECENT_INCIDENT_LIMIT: ${RECENT_INCIDENT_LIMIT:-50}
+      STARTUP_DB_RETRIES: ${STARTUP_DB_RETRIES:-20}
+      STARTUP_DB_RETRY_DELAY_SECONDS: ${STARTUP_DB_RETRY_DELAY_SECONDS:-1.5}
     ports:
       - "8000:8000"
     depends_on:

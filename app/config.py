@@ -13,7 +13,12 @@ from app.exceptions import ConfigurationError
 class Settings(BaseSettings):
     """Environment-based configuration with defaults and validation."""
 
-    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(
+        case_sensitive=False,
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     postgres_host: str = "postgres"
     postgres_port: int = 5432

@@ -3,6 +3,7 @@
 import json
 import logging
 from functools import lru_cache
+from typing import cast
 
 import redis
 
@@ -77,7 +78,7 @@ def get_cached_incident(incident_id: str) -> dict | None:
         return None
     if cached:
         try:
-            record = json.loads(cached)
+            record = json.loads(cast(str, cached))
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(
                 "Incident cache entry was invalid; falling back to PostgreSQL",

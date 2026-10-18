@@ -36,14 +36,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class _JsonStreamHandler(logging.StreamHandler):
+    _incident_json_handler = True
+
+
 def configure_logging() -> logging.Logger:
     """Configure and return the application's structured logger."""
     logger = logging.getLogger("app")
     logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
     logger.propagate = False
     if not any(getattr(handler, "_incident_json_handler", False) for handler in logger.handlers):
-        handler = logging.StreamHandler()
+        handler = _JsonStreamHandler()
         handler.setFormatter(JsonFormatter())
-        handler._incident_json_handler = True
         logger.addHandler(handler)
     return logger
