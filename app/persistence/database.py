@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import psycopg
 
@@ -78,7 +77,7 @@ def wait_for_database() -> None:
 
 
 @track_db_latency("insert_incident")
-def insert_incident(record: dict, occurred_at: Optional[datetime]) -> None:
+def insert_incident(record: dict, occurred_at: datetime | None) -> None:
     """Insert an incident row.
 
     Raises:
@@ -128,7 +127,7 @@ def fetch_recent_incidents(limit: int = 20) -> list[dict]:
 
 
 @track_db_latency("select_incident")
-def fetch_incident(incident_id: str) -> Optional[dict]:
+def fetch_incident(incident_id: str) -> dict | None:
     """Return one incident by ID, or ``None`` if it does not exist."""
     with connect() as conn:
         with conn.cursor() as cur:

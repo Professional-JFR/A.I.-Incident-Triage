@@ -239,7 +239,21 @@ Example: `histogram_quantile(0.95, sum by (le) (rate(http_request_duration_secon
 - **ADR-4 Lazy, validated settings:** configuration is loaded with Pydantic Settings at startup,
   not import time. Startup retries use exponential backoff for transient errors (connection
   refused, timeouts) and fail immediately on permanent ones (authentication, missing database).
-- **ADR-5 Rule-based triage:** transparent baseline; no model evaluation framework yet.
+- **ADR-5 Rule-based triage:** transparent baseline, measured by an offline evaluation harness
+  (see below) so any future model can be compared against it.
+
+## Evaluation
+
+`python -m app.evaluation [dataset.json]` scores severity and runbook predictions against
+`data/labeled_incidents.json` and prints accuracy, per-severity precision/recall, and mean
+latency as JSON. The dataset is small and hand-labeled, so treat results as a regression
+baseline, not a benchmark of real-world accuracy.
+
+## Developer workflow
+
+CI (`.github/workflows/ci.yml`) runs `ruff check .`, `pytest` (80% coverage gate), and the
+evaluation on every push and pull request. Run the same checks locally with
+`pip install ruff && ruff check . && pytest`.
 
 ## Troubleshooting
 
@@ -302,7 +316,7 @@ before exposing the service publicly:
 ## Current Scope / Limitations
 - Uses **baseline rule-based AI logic** (intentionally simple, transparent, and demo-friendly)
 - Not yet optimized for high-throughput production scale
-- No advanced model training/evaluation pipeline yet
+- Evaluation is an offline harness over a small labeled set; no model training pipeline yet
 
 ---
 

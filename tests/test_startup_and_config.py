@@ -1,5 +1,5 @@
-import pytest
 import psycopg
+import pytest
 
 from app import main
 from app.config import get_settings, reset_settings_cache
@@ -14,7 +14,12 @@ from app.exceptions import (
     ValidationError,
 )
 from app.persistence import cache, database
-from app.resilience import CircuitBreaker, CircuitOpenError, is_transient_db_error, retry_with_backoff
+from app.resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    is_transient_db_error,
+    retry_with_backoff,
+)
 
 
 @pytest.fixture

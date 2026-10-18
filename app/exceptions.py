@@ -1,6 +1,6 @@
 """Domain exception hierarchy with stable error codes and HTTP status mapping."""
 
-from typing import Any, Optional
+from typing import Any
 
 
 class TriageException(Exception):
@@ -12,9 +12,9 @@ class TriageException(Exception):
 
     def __init__(
         self,
-        message: Optional[str] = None,
+        message: str | None = None,
         *,
-        details: Optional[dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """Create the error with an optional public message and extra details."""
         self.message = message or type(self).message
@@ -74,9 +74,9 @@ class DatabaseConnectionError(DatabaseException):
 
     def __init__(
         self,
-        message: Optional[str] = None,
+        message: str | None = None,
         *,
-        details: Optional[dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         transient: bool = True,
     ) -> None:
         """Record whether the failure is transient (retryable) or permanent."""

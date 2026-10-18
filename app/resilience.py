@@ -3,7 +3,8 @@
 import logging
 import threading
 import time
-from typing import Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 logger = logging.getLogger("app.resilience")
 
@@ -25,7 +26,7 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.reset_timeout_seconds = reset_timeout_seconds
         self._failures = 0
-        self._opened_at: Optional[float] = None
+        self._opened_at: float | None = None
         self._lock = threading.Lock()
 
     @property

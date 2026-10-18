@@ -1,6 +1,5 @@
 import logging
 import re
-from typing import Optional
 
 logger = logging.getLogger("app.triage")
 
@@ -72,7 +71,7 @@ def predict_severity(title: str, description: str) -> str:
     return "low"
 
 
-def suggest_runbook(title: str, description: str, service: Optional[str]) -> str:
+def suggest_runbook(title: str, description: str, service: str | None) -> str:
     """Recommend a runbook based on incident context.
 
     Args:
@@ -102,7 +101,7 @@ def suggest_runbook(title: str, description: str, service: Optional[str]) -> str
     return DEFAULT_RUNBOOK
 
 
-def find_duplicate(title: str, description: str, recent_incidents: list[dict]) -> Optional[str]:
+def find_duplicate(title: str, description: str, recent_incidents: list[dict]) -> str | None:
     """Return a similar recent incident when token overlap crosses the threshold.
 
     Args:

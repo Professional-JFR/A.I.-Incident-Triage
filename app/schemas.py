@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -9,9 +9,9 @@ class IncidentIn(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1, max_length=5000)
-    service: Optional[str] = Field(None, min_length=1, max_length=100)
-    source: Optional[str] = Field(None, min_length=1, max_length=100)
-    timestamp: Optional[datetime] = None
+    service: str | None = Field(None, min_length=1, max_length=100)
+    source: str | None = Field(None, min_length=1, max_length=100)
+    timestamp: datetime | None = None
 
     @field_validator("title", "description", "service", "source", mode="before")
     @classmethod
@@ -34,7 +34,7 @@ class TriageOut(BaseModel):
     predicted_severity: str = Field(
         ..., description="One of low, medium, high, critical.", examples=["high"]
     )
-    duplicate_of: Optional[str] = Field(
+    duplicate_of: str | None = Field(
         None, description="ID of a similar recent incident, if any.", examples=["INC-7D962A80"]
     )
     runbook_suggestion: str = Field(
@@ -48,9 +48,9 @@ class IncidentDetailOut(TriageOut):
 
     title: str
     description: str
-    service: Optional[str] = None
-    source: Optional[str] = None
-    timestamp: Optional[str] = Field(None, description="ISO 8601 time the incident occurred.")
+    service: str | None = None
+    source: str | None = None
+    timestamp: str | None = Field(None, description="ISO 8601 time the incident occurred.")
 
 
 class HealthOut(BaseModel):
@@ -72,7 +72,7 @@ class ErrorDetail(BaseModel):
 
     code: str = Field(..., examples=["database_unavailable"])
     message: str = Field(..., examples=["Incident storage is temporarily unavailable."])
-    details: Optional[dict[str, Any]] = None
+    details: dict[str, Any] | None = None
 
 
 class ErrorOut(BaseModel):
