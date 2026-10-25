@@ -4,7 +4,7 @@ uvicorn[standard]==0.30.6
 psycopg[binary]==3.2.1
 redis==5.0.8
 pydantic==2.8.2
-pydantic-settings==2.4.0
+pydantic-settings==2.16.1
 python-dotenv==1.2.2
 psycopg-pool==3.2.8
 prometheus-client==0.20.0
